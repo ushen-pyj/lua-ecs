@@ -9,11 +9,16 @@ world:template("health", { current = 100, max = 100 })
 world:template("faction", { side = "neutral" }) -- side: "hero", "enemy"
 world:template("patrol", { range = 10, timer = 0 })
 
---- movement
-world:system({"pos", "vel"}, function(dt, id, pos, vel)
-    pos.x = pos.x + vel.dx * dt
-    pos.y = pos.y + vel.dy * dt
-end)
+local physics_group = world:group("pos", "vel")
+
+local function run_physics(dt)
+    for id in physics_group:iter() do
+        local pos = world:get(id, "pos")
+        local vel = world:get(id, "vel")
+        pos.x = pos.x + vel.dx * dt
+        pos.y = pos.y + vel.dy * dt
+    end
+end
 
 --- AI patrol system
 world:system({"vel", "patrol"}, function(dt, id, vel, patrol)
@@ -85,6 +90,7 @@ for frame = 1, 10 do
     local dt = 0.5 
     print(string.format("\n--- Frame %d ---", frame))
     
+    run_physics(dt)
     world:update(dt)
     
     death_reaper(world)

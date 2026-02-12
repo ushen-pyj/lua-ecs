@@ -1,6 +1,7 @@
 local sparseset = require "sparseset"
 local create_proxy = require "ecs.entity"
 local View = require "ecs.view"
+local Group = require "ecs.group"
 
 local World = {}
 World.__index = World
@@ -12,6 +13,7 @@ function World.new()
     self.component_names = {}
     self.templates = {}
     self.systems = {}
+    self.groups = {}
     return self
 end
 
@@ -64,6 +66,7 @@ function World:add(id, name, data)
     end
     
     set:insert(id, data)
+    self:update_groups_on_add(id, name)
     return data
 end
 
@@ -79,7 +82,10 @@ end
 
 function World:remove(id, name)
     local set = self.component_sets[name]
-    if set then set:remove(id) end
+    if set then 
+        self:update_groups_on_remove(id, name)
+        set:remove(id) 
+    end
 end
 
 function World:proxy(id)
@@ -93,6 +99,31 @@ end
 
 function World:system(names, callback)
     table.insert(self.systems, {names = names, fn = callback})
+end
+
+function World:group(...)
+    local components = {...}
+    table.sort(components)
+    local key = table.concat(components, "|")
+    
+    if self.groups[key] then return self.groups[key] end
+    
+    local group = Group.new(self, components)
+    self.groups[key] = group
+    table.insert(self.groups, group)
+    return group
+end
+
+function World:update_groups_on_add(id, name)
+    for _, group in ipairs(self.groups) do
+        group:on_add(id, name)
+    end
+end
+
+function World:update_groups_on_remove(id, name)
+    for _, group in ipairs(self.groups) do
+        group:on_remove(id, name)
+    end
 end
 
 function World:update(dt)
