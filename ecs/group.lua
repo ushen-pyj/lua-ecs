@@ -140,14 +140,18 @@ function Group:remove_from_group(id)
     self.size = self.size - 1
 end
 
+local CComponent = require "ecs.c_component"
+
 function Group:iter()
     -- Iterator that goes from 1 to self.size
     local size = self.size
     if size == 0 then return function() end end
 
+    local world = self.world
     -- Cache sets in indexed order matching self.components
     local sets = {}
-    for i, name in ipairs(self.components) do
+    local names = self.components
+    for i, name in ipairs(names) do
         sets[i] = self.sets[name]
     end
     
@@ -167,13 +171,21 @@ function Group:iter()
         -- idx matches var + 1
         var = idx
         
-        results[1] = data
-        
-        -- Retrieve component data for other sets
-        -- We start from 2
-        for i = 2, n_sets do
-            local _, d = sets[i]:at(idx)
-            results[i] = d
+        for i = 1, n_sets do
+            local d
+            if i == 1 then
+                d = data
+            else
+                local _, val = sets[i]:at(idx)
+                d = val
+            end
+            
+            local desc = world.c_descriptors[names[i]]
+            if desc then
+                results[i] = CComponent.new(world, id, names[i], desc)
+            else
+                results[i] = d
+            end
         end
         
         return id, results

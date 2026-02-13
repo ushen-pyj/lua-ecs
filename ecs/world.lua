@@ -9,11 +9,11 @@ World.__index = World
 local CComponent = require "ecs.c_component"
 
 local C_TYPES = {
-    int = { size = 4, pack = "i4" },
-    float = { size = 4, pack = "f" },
-    double = { size = 8, pack = "d" },
-    byte = { size = 1, pack = "I1" },
-    bool = { size = 1, pack = "I1" }, -- 0 or 1
+    int = { id = 1, size = 4, pack = "i4" },
+    float = { id = 2, size = 4, pack = "f" },
+    double = { id = 3, size = 8, pack = "d" },
+    byte = { id = 4, size = 1, pack = "I1" },
+    bool = { id = 5, size = 1, pack = "I1" }, -- 0 or 1
 }
 
 function World.new()
@@ -49,7 +49,7 @@ function World:register(decl)
             local info = C_TYPES[ftype]
             if not info then error("Unknown type: "..ftype) end
             is_c = true
-            fields[fname] = { offset = stride, type = ftype }
+            fields[fname] = { offset = stride, type = info.id }
             stride = stride + info.size
         end
     end
@@ -142,8 +142,9 @@ function World:add(id, name, data)
             end
         end
         
-        set:insert(id, data)
-        self:update_groups_on_add(id, name)
+        if set:insert(id, data) then
+            self:update_groups_on_add(id, name)
+        end
         return data
     end
 end
