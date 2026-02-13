@@ -9,12 +9,18 @@ world:template("health", { current = 100, max = 100 })
 world:template("faction", { side = "neutral" }) -- side: "hero", "enemy"
 world:template("patrol", { range = 10, timer = 0 })
 
+-- Groups are performance-optimized subsets of entities.
+-- They maintain entities with specific components contiguously in memory,
+-- making iteration extremely fast and avoiding checks during loops.
 local physics_group = world:group("pos", "vel")
+local combat_group = world:group("pos", "faction", "health")
 
 local function run_physics(dt)
-    for id in physics_group:iter() do
-        local pos = world:get(id, "pos")
-        local vel = world:get(id, "vel")
+    -- Group iterators return both the entity ID and a list of components
+    -- in the order they were specified during group creation.
+    -- This avoids the overhead of world:get() calls inside the loop.
+    for id, comps in physics_group:iter() do
+        local pos, vel = table.unpack(comps)
         pos.x = pos.x + vel.dx * dt
         pos.y = pos.y + vel.dy * dt
     end
@@ -34,8 +40,9 @@ end)
 --- combat system
 world:system({"pos", "faction", "health"}, function(dt, id, pos, faction, health)
     if faction.side == "hero" then
-        local view = world:view("pos", "faction", "health")
-        for target_id, comps in view:each() do
+        -- Instead of creating a new view every time, we use a pre-defined group
+        -- which is much more efficient for high-frequency operations.
+        for target_id, comps in combat_group:iter() do
             local t_pos, t_faction, t_health = table.unpack(comps)
             if t_faction.side == "enemy" then
                 local dx = pos.x - t_pos.x
@@ -85,6 +92,20 @@ for i = 1, 3 do
 end
 
 print("\n--- Starting Game Scene Simulation ---\n")
+print(string.format("[Info] Physics Group size: %d", physics_group.size))
+
+-- Demonstrate dynamic group membership
+print("[Info] Creating a static object (pos but no vel)...")
+local static_obj = world:create({ pos = { x = 100, y = 100 } })
+print(string.format("[Info] Physics Group size remains: %d", physics_group.size))
+
+print("[Info] Adding velocity to the static object...")
+world:add(static_obj, "vel", { dx = -1, dy = -1 })
+print(string.format("[Info] Physics Group size updated: %d", physics_group.size))
+
+print("[Info] Removing velocity from the object...")
+world:remove(static_obj, "vel")
+print(string.format("[Info] Physics Group size decreased: %d", physics_group.size))
 
 for frame = 1, 10 do
     local dt = 0.5 

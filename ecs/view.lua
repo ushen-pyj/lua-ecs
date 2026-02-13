@@ -37,13 +37,13 @@ function View:each()
     local min_idx = self.min_idx
     local sets = self.sets
     
+            
+    local results = {}
     return function()
         while true do
             local i, id, data = iter_func(state, var)
             if not i then return nil end
             var = i
-            
-            local results = {}
             local match = true
             for j=1, n do
                 if j == min_idx then
@@ -59,6 +59,7 @@ function View:each()
             end
             
             if match then
+                -- TODO ushen do not update results after return
                 return id, results
             end
         end

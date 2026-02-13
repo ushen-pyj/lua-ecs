@@ -142,18 +142,41 @@ end
 
 function Group:iter()
     -- Iterator that goes from 1 to self.size
-    local idx = 0
     local size = self.size
-    -- Use the first set as the leader for ID retrieval
-    local leader_set = self.sets[self.components[1]]
+    if size == 0 then return function() end end
+
+    -- Cache sets in indexed order matching self.components
+    local sets = {}
+    for i, name in ipairs(self.components) do
+        sets[i] = self.sets[name]
+    end
     
+    local results = {}
+    local n_sets = #sets
+    
+    -- Use the first set as the leader
+    -- checking leader iterator
+    local iter_func, state, var = sets[1]:iter()
+
     return function()
-        idx = idx + 1
-        if idx > size then return nil end
+        -- Ensure we don't go beyond group size
+        -- var is the previous index (integer). Initial 0.
+        if var >= size then return nil end
         
-        local id = leader_set:at(idx)
-        -- TODO: Return components as well if needed, similar to View
-        return id
+        local idx, id, data = iter_func(state, var)
+        -- idx matches var + 1
+        var = idx
+        
+        results[1] = data
+        
+        -- Retrieve component data for other sets
+        -- We start from 2
+        for i = 2, n_sets do
+            local _, d = sets[i]:at(idx)
+            results[i] = d
+        end
+        
+        return id, results
     end
 end
 
