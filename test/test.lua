@@ -87,9 +87,9 @@ local function test_view()
     local view = world:view("pos", "vel")
     local count = 0
     local results = {}
-    for id, comps in view:each() do
+    for id, p, v in view:each() do
         count = count + 1
-        results[id] = {comps[1], comps[2]}
+        results[id] = {p, v}
     end
     
     assert_eq(count, 2, "View should find 2 entities")
@@ -243,9 +243,9 @@ local function test_c_components()
     -- Use in view
     local view = world:view("c_pos")
     local count = 0
-    for id, comps in view:each() do
+    for id, cp_val in view:each() do
         count = count + 1
-        assert_eq(comps[1].x, 10.5)
+        assert_eq(cp_val.x, 10.5)
     end
     assert_eq(count, 1)
     
@@ -286,8 +286,8 @@ local function test_systems()
     
     local view = world:view("pos")
     local results = {}
-    for id, comps in view:each() do
-        results[#results+1] = comps[1].x
+    for id, pos in view:each() do
+        results[#results+1] = pos.x
     end
     
     table.sort(results)

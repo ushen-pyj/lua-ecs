@@ -35,18 +35,29 @@ function View:each()
     if self.invalid then return function() end end
     
     local world = self.world
-    local iter_func, state, var = self.sets[self.min_idx]:iter()
     local n = self.n
     local min_idx = self.min_idx
     local sets = self.sets
     local names = self.names
     
+    local flyweights = {}
+    for j=1, n do
+        local desc = world.c_descriptors[names[j]]
+        if desc then
+            flyweights[j] = CComponent.new(world, 0, names[j], desc)
+        end
+    end
+
+    local iter_func, state, var = sets[min_idx]:iter()
+    
     local results = {}
+
     return function()
         while true do
             local i, id, data = iter_func(state, var)
             if not i then return nil end
             var = i
+            
             local match = true
             for j=1, n do
                 local d
@@ -60,16 +71,17 @@ function View:each()
                     end
                 end
                 
-                local desc = world.c_descriptors[names[j]]
-                if desc then
-                    results[j] = CComponent.new(world, id, names[j], desc)
+                local fw = flyweights[j]
+                if fw then
+                    fw:_bind(id)
+                    results[j] = fw
                 else
                     results[j] = d
                 end
             end
             
             if match then
-                return id, results
+                return id, table.unpack(results, 1, n)
             end
         end
     end

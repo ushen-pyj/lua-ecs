@@ -105,51 +105,100 @@ function Group:remove_from_group(id)
     self.size = self.size - 1
 end
 
+function Group:sort(comparator)
+    local size = self.size
+    if size <= 1 then return end
+    
+    local leader_name = self.owned[1] or self.filters[1]
+    local leader_set = self.owned_sets[leader_name] or self.filter_sets[leader_name]
+    
+    local ids = {}
+    for i = 1, size do
+        ids[i] = (leader_set:at(i))
+    end
+    
+    table.sort(ids, function(a, b)
+        return comparator(self.world, a, b)
+    end)
+    
+    for i = 1, size do
+        local target_id = ids[i]
+        local current_pos = leader_set:index_of(target_id)
+        if current_pos ~= i then
+            for _, set in pairs(self.owned_sets) do
+                set:swap(current_pos, i)
+            end
+        end
+    end
+end
+
 local CComponent = require "ecs.c_component"
 
-function Group:iter()
+function Group:each()
     local size = self.size
     if size == 0 then return function() end end
 
     local world = self.world
-    local results = {}
+    local components = self.components
+    local num_comps = #components
     
     local sets = {}
     local is_owned = {}
+    local flyweights = {}
     
-    for i, name in ipairs(self.components) do
+    for i, name in ipairs(components) do
         sets[i] = self.owned_sets[name] or self.filter_sets[name]
         is_owned[i] = self.owned_sets[name] ~= nil
+        
+        local desc = world.c_descriptors[name]
+        if desc then
+            flyweights[i] = CComponent.new(world, 0, name, desc)
+        end
     end
 
     local leader_name = self.owned[1] or self.filters[1]
     local leader_set = self.owned_sets[leader_name] or self.filter_sets[leader_name]
     local iter_func, state, var = leader_set:iter()
 
+    local results = {} 
+
     return function()
         if var >= size then return nil end
         local idx, id, data = iter_func(state, var)
         var = idx
         
-        for i = 1, #self.components do
-            local name = self.components[i]
+        for i = 1, num_comps do
             local d
-            
             if is_owned[i] then
-                local _, val = sets[i]:at(idx)
-                d = val
+                if i == 1 and sets[i] == leader_set then
+                    d = data
+                else
+                    local _, val = sets[i]:at(idx)
+                    d = val
+                end
             else
                 d = sets[i]:get(id)
             end
             
-            local desc = world.c_descriptors[name]
-            if desc then
-                results[i] = CComponent.new(world, id, name, desc)
+            local fw = flyweights[i]
+            if fw then
+                fw:_bind(id)
+                results[i] = fw
             else
                 results[i] = d
             end
         end
-        return id, results
+        return id, table.unpack(results, 1, num_comps)
+    end
+end
+
+function Group:iter()
+    local it = self:each()
+    return function()
+        local r = {it()}
+        if not r[1] then return nil end
+        local id = table.remove(r, 1)
+        return id, r
     end
 end
 

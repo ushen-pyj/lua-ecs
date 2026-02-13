@@ -26,7 +26,59 @@ function World.new()
     self.systems = {}
     self.groups = {}
     self.component_owners = {}
+    self.signals = {
+        construct = {},
+        update = {},
+        destroy = {},
+    }
+    self.view_cache = {}
     return self
+end
+
+local runner_cache = {}
+local function get_runner(n)
+    if runner_cache[n] then return runner_cache[n] end
+    
+    local args = {"id"}
+    local params = {"dt", "view", "fn"}
+    for i = 1, n do table.insert(args, "c" .. i) end
+    local arg_str = table.concat(args, ", ")
+    
+    local code = string.format([[
+        return function(dt, view, fn)
+            for %s in view:each() do
+                fn(dt, %s)
+            end
+        end
+    ]], arg_str, arg_str)
+    
+    local chunk = load(code)
+    runner_cache[n] = chunk()
+    return runner_cache[n]
+end
+
+function World:on_construct(name, callback)
+    self.signals.construct[name] = self.signals.construct[name] or {}
+    table.insert(self.signals.construct[name], callback)
+end
+
+function World:on_update(name, callback)
+    self.signals.update[name] = self.signals.update[name] or {}
+    table.insert(self.signals.update[name], callback)
+end
+
+function World:on_destroy(name, callback)
+    self.signals.destroy[name] = self.signals.destroy[name] or {}
+    table.insert(self.signals.destroy[name], callback)
+end
+
+function World:trigger_signal(type, name, id)
+    local callbacks = self.signals[type][name]
+    if callbacks then
+        for _, cb in ipairs(callbacks) do
+            cb(self, id)
+        end
+    end
 end
 
 function World:register(decl)
@@ -134,8 +186,12 @@ function World:add(id, name, data)
             data = nil
         end
         
-        if set:insert(id, data) then
+        local is_new = set:insert(id, data)
+        if is_new then
              self:update_groups_on_add(id, name)
+             self:trigger_signal("construct", name, id)
+        else
+             self:trigger_signal("update", name, id)
         end
         return self:get(id, name)
     else
@@ -150,11 +206,29 @@ function World:add(id, name, data)
             end
         end
         
-        if set:insert(id, data) then
+        local is_new = set:insert(id, data)
+        if is_new then
             self:update_groups_on_add(id, name)
+            self:trigger_signal("construct", name, id)
+        else
+            self:trigger_signal("update", name, id)
         end
         return data
     end
+end
+
+function World:replace(id, name, data)
+    if not self:has(id, name) then return nil end
+    return self:add(id, name, data)
+end
+
+function World:patch(id, name, callback)
+    local comp = self:get(id, name)
+    if not comp then return nil end
+    if callback then callback(comp) end
+    
+    self:trigger_signal("update", name, id)
+    return comp
 end
 
 function World:get(id, name)
@@ -176,7 +250,8 @@ end
 
 function World:remove(id, name)
     local set = self.component_sets[name]
-    if set then 
+    if set and set:contains(id) then 
+        self:trigger_signal("destroy", name, id)
         self:update_groups_on_remove(id, name)
         set:remove(id) 
     end
@@ -188,11 +263,28 @@ function World:proxy(id)
 end
 
 function World:view(...)
-    return View.new(self, {...})
+    local names = {...}
+    if #names == 0 then return View.new(self, {}) end
+    
+    local key_names = {}
+    for i, n in ipairs(names) do key_names[i] = n end
+    table.sort(key_names)
+    local key = table.concat(key_names, "|")
+    
+    if self.view_cache[key] then return self.view_cache[key] end
+    
+    local view = View.new(self, names)
+    self.view_cache[key] = view
+    return view
 end
 
 function World:system(names, callback)
-    table.insert(self.systems, {names = names, fn = callback})
+    local runner = get_runner(#names)
+    table.insert(self.systems, {
+        names = names, 
+        fn = callback,
+        runner = runner
+    })
 end
 
 function World:group(owned, ...)
@@ -247,12 +339,41 @@ function World:update_groups_on_remove(id, name)
     end
 end
 
+function World:sort(name, comparator)
+    local group = self.component_owners[name]
+    if group then
+        group:sort(comparator)
+        return
+    end
+
+    local set = self.component_sets[name]
+    if not set then return end
+    
+    local size = set:size()
+    if size <= 1 then return end
+    
+    local ids = {}
+    for i = 1, size do
+        ids[i] = (set:at(i))
+    end
+    
+    table.sort(ids, function(a, b)
+        return comparator(self, a, b)
+    end)
+    
+    for i = 1, size do
+        local target_id = ids[i]
+        local current_pos = set:index_of(target_id)
+        if current_pos ~= i then
+            set:swap(current_pos, i)
+        end
+    end
+end
+
 function World:update(dt)
     for _, sys in ipairs(self.systems) do
         local view = self:view(table.unpack(sys.names))
-        for id, comps in view:each() do
-            sys.fn(dt, id, table.unpack(comps, 1, view.n))
-        end
+        sys.runner(dt, view, sys.fn)
     end
 end
 

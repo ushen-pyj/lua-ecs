@@ -9,18 +9,11 @@ world:template("health", { current = 100, max = 100 })
 world:template("faction", { side = "neutral" }) -- side: "hero", "enemy"
 world:template("patrol", { range = 10, timer = 0 })
 
--- Groups are performance-optimized subsets of entities.
--- They maintain entities with specific components contiguously in memory,
--- making iteration extremely fast and avoiding checks during loops.
 local physics_group = world:group("pos", "vel")
-local combat_group = world:group("pos", "faction", "health")
+local combat_group = world:group({"faction", "health"}, {"pos"})
 
 local function run_physics(dt)
-    -- Group iterators return both the entity ID and a list of components
-    -- in the order they were specified during group creation.
-    -- This avoids the overhead of world:get() calls inside the loop.
-    for id, comps in physics_group:iter() do
-        local pos, vel = table.unpack(comps)
+    for id, pos, vel in physics_group:each() do
         pos.x = pos.x + vel.dx * dt
         pos.y = pos.y + vel.dy * dt
     end
@@ -40,10 +33,7 @@ end)
 --- combat system
 world:system({"pos", "faction", "health"}, function(dt, id, pos, faction, health)
     if faction.side == "hero" then
-        -- Instead of creating a new view every time, we use a pre-defined group
-        -- which is much more efficient for high-frequency operations.
-        for target_id, comps in combat_group:iter() do
-            local t_pos, t_faction, t_health = table.unpack(comps)
+        for target_id, t_faction, t_health, t_pos in combat_group:each() do
             if t_faction.side == "enemy" then
                 local dx = pos.x - t_pos.x
                 local dy = pos.y - t_pos.y
@@ -61,8 +51,7 @@ end)
 --- death system
 local function death_reaper(world)
     local dead_pool = {}
-    for id, comps in world:view("health"):each() do
-        local health = comps[1]
+    for id, health in world:view("health"):each() do
         if health.current <= 0 then
             table.insert(dead_pool, id)
         end
