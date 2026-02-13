@@ -205,7 +205,7 @@ local function test_group_conflict()
     end)
     
     assert_false(ok, "Should not allow duplicate ownership of 'pos'")
-    assert_true(err:match("already owned by Group"), "Error message should mention ownership")
+    assert_true(err:match("Group conflict"), "Error message should mention conflict")
     
     -- Should ALLOW partial group that only FILTERS 'pos'
     local ok2 = pcall(function()
@@ -214,6 +214,61 @@ local function test_group_conflict()
     assert_true(ok2, "Should allow filtering a component owned by another group")
     
     print("Group Ownership Conflict tests passed.")
+end
+
+local function test_nested_groups()
+    print("Testing Nested Groups...")
+    local world = ecs.world()
+    
+    -- G1 (General): pos, vel
+    local G1 = world:group("pos", "vel")
+    -- G2 (Specific): pos, vel, combat (Subgroup of G1)
+    local G2 = world:group("pos", "vel", "combat")
+    
+    local e1 = world:create({pos=1, vel=1})          -- Only G1
+    local e2 = world:create({pos=2, vel=2, combat=1}) -- G1 and G2
+    local e3 = world:create({pos=3})                -- Neither
+    
+    -- Check initial state
+    assert_eq(G1.size, 2, "G1 size should be 2")
+    assert_eq(G2.size, 1, "G2 size should be 1")
+    
+    -- Check Memory Layout (Specific groups come first)
+    local set_pos = world.component_sets["pos"]
+    assert_eq(set_pos:at(1), e2, "Entity e2 (Specific) should be at pos 1")
+    assert_eq(set_pos:at(2), e1, "Entity e1 (General) should be at pos 2")
+    
+    -- Check Iteration Results and Order for G1 (General)
+    print("  - Verifying iteration order for G1 (General)...")
+    local results = {}
+    for id, p, v in G1:each() do
+        table.insert(results, {id = id, p = p, v = v})
+    end
+    assert_eq(#results, 2, "G1 should have 2 entities")
+    assert_eq(results[1].id, e2, "First in G1 iteration should be e2 (most specific)")
+    assert_eq(results[2].id, e1, "Second in G1 iteration should be e1")
+    assert_eq(results[1].p, 2, "e2 data check")
+    assert_eq(results[2].p, 1, "e1 data check")
+
+    -- Add combat to e1 -> moves it into G2
+    print("  - Adding combat to e1...")
+    world:add(e1, "combat", 1)
+    assert_eq(G1.size, 2, "G1 size remains 2")
+    assert_eq(G2.size, 2, "G2 size increased to 2")
+    
+    -- Now both are in G2, order depends on which was moved last but both are in G2 section
+    for id, p, v, c in G2:each() do
+        assert_true(id == e1 or id == e2)
+    end
+
+    -- Remove combat from e1 -> moves it out of G2 but stays in G1
+    print("  - Removing combat from e1...")
+    world:remove(e1, "combat")
+    assert_eq(G1.size, 2)
+    assert_eq(G2.size, 1)
+    assert_eq(G2:at(1), e2, "e2 should still be at index 1 of G2")
+    
+    print("Nested Groups tests passed.")
 end
 
 local function test_c_components()
@@ -305,6 +360,7 @@ local function run_tests()
     test_late_group()
     test_group_partial()
     test_group_conflict()
+    test_nested_groups()
     test_c_components()
     test_templates()
     test_systems()

@@ -23,7 +23,7 @@ function Group.new(world, owned, filters)
         self.filter_sets[name] = world:register_component(name)
     end
     
-    self:initialize()
+    -- self:initialize() 
     return self
 end
 
@@ -52,11 +52,13 @@ function Group:owns(component_name)
     return false
 end
 
-function Group:match(id)
-    for _, set in pairs(self.owned_sets) do
+function Group:match(id, exclude_name)
+    for name, set in pairs(self.owned_sets) do
+        if name == exclude_name then return false end
         if not set:contains(id) then return false end
     end
-    for _, set in pairs(self.filter_sets) do
+    for name, set in pairs(self.filter_sets) do
+        if name == exclude_name then return false end
         if not set:contains(id) then return false end
     end
     return true
@@ -72,7 +74,9 @@ end
 function Group:on_remove(id, component_name)
     if not self:owns(component_name) then return end
     if self:is_in_group(id) then
-        self:remove_from_group(id)
+        if not self:match(id, component_name) then
+            self:remove_from_group(id)
+        end
     end
 end
 
@@ -130,6 +134,13 @@ function Group:sort(comparator)
             end
         end
     end
+end
+
+function Group:at(index)
+    if index <= 0 or index > self.size then return nil end
+    local leader_name = self.owned[1] or self.filters[1]
+    local leader_set = self.owned_sets[leader_name] or self.filter_sets[leader_name]
+    return (leader_set:at(index))
 end
 
 local CComponent = require "ecs.c_component"

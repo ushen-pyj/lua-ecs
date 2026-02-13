@@ -25,7 +25,7 @@ function World.new()
     self.templates = {}
     self.systems = {}
     self.groups = {}
-    self.component_owners = {}
+    self.group_chains = {} -- component_name -> sorted list of groups owning it
     self.signals = {
         construct = {},
         update = {},
@@ -306,43 +306,146 @@ function World:group(owned, ...)
     
     if self.groups[key] then return self.groups[key] end
 
+    -- Compatibility check for Nested Groups
     for _, name in ipairs(owned_names) do
-        if self.component_owners[name] then
-            local owner = self.component_owners[name]
-            error(string.format(
-                "Ownership conflict: component '%s' is already owned by Group(%s).",
-                name, owner.key))
+        local chain = self.group_chains[name]
+        if chain then
+            for _, existing in ipairs(chain) do
+                -- Check if one is a subset of the other
+                local is_subset = true
+                for _, ename in ipairs(existing.owned) do
+                    local found = false
+                    for _, my_name in ipairs(owned_names) do
+                        if ename == my_name then found = true; break end
+                    end
+                    if not found then is_subset = false; break end
+                end
+
+                local is_superset = true
+                for _, my_name in ipairs(owned_names) do
+                    local found = false
+                    for _, ename in ipairs(existing.owned) do
+                        if my_name == ename then found = true; break end
+                    end
+                    if not found then is_superset = false; break end
+                end
+
+                if not is_subset and not is_superset then
+                    error(string.format("Group conflict: Group(%s) and Group(%s) share component '%s' but are not nested.", 
+                        key, existing.key, name))
+                end
+            end
         end
     end
     
     local group = Group.new(self, owned_names, filter_names)
     group.key = key
     
+    -- Add to chains and sort by complexity (more components first)
     for _, name in ipairs(owned_names) do
-        self.component_owners[name] = group
+        local chain = self.group_chains[name] or {}
+        table.insert(chain, group)
+        table.sort(chain, function(a, b) return #a.owned > #b.owned end)
+        self.group_chains[name] = chain
     end
     
     self.groups[key] = group
     table.insert(self.groups, group)
+
+    -- Initialize the group for existing entities
+    local leader_name = owned_names[1] or filter_names[1]
+    local leader_set = self.component_sets[leader_name]
+    if leader_set then
+        local ids = {}
+        local size = leader_set:size()
+        for i = 1, size do
+            ids[i] = (leader_set:at(i))
+        end
+        for i = 1, size do
+            local id = ids[i]
+            if group:match(id) then
+                self:update_groups_on_add(id, owned_names[1])
+            end
+        end
+    end
+
     return group
 end
 
 function World:update_groups_on_add(id, name)
+    -- 1. Handle non-owned groups
     for _, group in ipairs(self.groups) do
-        group:on_add(id, name)
+        local is_owned = false
+        for _, n in ipairs(group.owned) do
+            if n == name then is_owned = true; break end
+        end
+        if not is_owned then
+            group:on_add(id, name)
+        end
+    end
+
+    local chain = self.group_chains[name]
+    if chain then
+        -- Process from LEAST specific to MOST specific.
+        -- This ensures that supergroups increment their size before subgroups 
+        -- "steal" the entity position at the front of the array.
+        for i = #chain, 1, -1 do
+            local group = chain[i]
+            local matches = group:match(id)
+            local in_group = group:is_in_group(id)
+            if matches and not in_group then
+                local target_pos = group.size + 1
+                for _, owned_name in ipairs(group.owned) do
+                    local set = self.component_sets[owned_name]
+                    local current_pos = set:index_of(id)
+                    if current_pos then
+                        set:swap(current_pos, target_pos)
+                    end
+                end
+                group.size = target_pos
+            end
+        end
     end
 end
 
 function World:update_groups_on_remove(id, name)
+    -- Handle non-owned groups
     for _, group in ipairs(self.groups) do
-        group:on_remove(id, name)
+        local is_chained = false
+        for _, owned_name in ipairs(group.owned) do
+            if owned_name == name then is_chained = true; break end
+        end
+        if not is_chained then
+            group:on_remove(id, name)
+        end
+    end
+
+    -- Process chain for owned groups (nested sorting)
+    local chain = self.group_chains[name]
+    if chain then
+        for _, group in ipairs(chain) do
+            local matches = group:match(id, name)
+            local in_group = group:is_in_group(id)
+            if in_group and not matches then
+                local target_pos = group.size
+                for _, owned_name in ipairs(group.owned) do
+                    local set = self.component_sets[owned_name]
+                    local current_pos = set:index_of(id)
+                    if current_pos then
+                        set:swap(current_pos, target_pos)
+                    end
+                end
+                group.size = group.size - 1
+            end
+        end
     end
 end
 
 function World:sort(name, comparator)
-    local group = self.component_owners[name]
-    if group then
-        group:sort(comparator)
+    local chain = self.group_chains[name]
+    if chain then
+        -- Sort the most complex group in the chain, it will reorder sub-groups
+        chain[1]:sort(comparator)
         return
     end
 
