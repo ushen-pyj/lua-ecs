@@ -13,7 +13,7 @@ local C_TYPES = {
     float = { id = 2, size = 4, pack = "f" },
     double = { id = 3, size = 8, pack = "d" },
     byte = { id = 4, size = 1, pack = "I1" },
-    bool = { id = 5, size = 1, pack = "I1" }, -- 0 or 1
+    bool = { id = 5, size = 1, pack = "I1" },
 }
 
 function World.new()
@@ -25,6 +25,7 @@ function World.new()
     self.templates = {}
     self.systems = {}
     self.groups = {}
+    self.component_owners = {}
     return self
 end
 
@@ -37,10 +38,10 @@ function World:register(decl)
     if not name then error("Component must have a name") end
     
     if self.component_sets[name] then return self.component_sets[name] end
-    
-    -- Check if C component
     local is_c = false
     local fields = {}
+    local field_names = {}
+    local format = "<"
     local stride = 0
     
     for _, s in ipairs(decl) do
@@ -50,6 +51,8 @@ function World:register(decl)
             if not info then error("Unknown type: "..ftype) end
             is_c = true
             fields[fname] = { offset = stride, type = info.id }
+            table.insert(field_names, fname)
+            format = format .. info.pack
             stride = stride + info.size
         end
     end
@@ -57,7 +60,12 @@ function World:register(decl)
     local set
     if is_c then
         set = sparseset.new_set(stride)
-        self.c_descriptors[name] = { stride = stride, fields = fields }
+        self.c_descriptors[name] = { 
+            stride = stride, 
+            fields = fields, 
+            field_names = field_names, 
+            format = format 
+        }
     else
         set = sparseset.new_set()
     end
@@ -110,27 +118,27 @@ function World:add(id, name, data)
     local desc = self.c_descriptors[name]
     
     if desc then
-        -- C Component
-        -- If data is a table, fill fields
-        -- Insert placeholder (zeroed) first
-        if set:insert(id, nil) then
-             if type(data) == "table" then
-                 for k, v in pairs(data) do
-                     local field = desc.fields[k]
-                     if field then
-                         set:set_field(id, field.offset, field.type, v)
-                     end
-                 end
-             -- If data is string (packed binary), use it directly?
-             -- Our set:insert Lua binding handles string now.
-             elseif type(data) == "string" then
-                 set:insert(id, data)
-             end
+        if type(data) == "table" then
+            local values = {}
+            for i, fname in ipairs(desc.field_names) do
+                local v = data[fname]
+                if v == nil then
+                    v = 0
+                elseif type(v) == "boolean" then
+                    v = v and 1 or 0
+                end
+                values[i] = v
+            end
+            data = string.pack(desc.format, table.unpack(values))
+        elseif type(data) ~= "string" then
+            data = nil
+        end
+        
+        if set:insert(id, data) then
              self:update_groups_on_add(id, name)
         end
-        return self:get(id, name) -- Return proxy
+        return self:get(id, name)
     else
-        -- Lua Component logic
         if data == true or data == nil then
             local tpl = self.templates[name]
             if tpl then
@@ -187,15 +195,41 @@ function World:system(names, callback)
     table.insert(self.systems, {names = names, fn = callback})
 end
 
-function World:group(...)
-    local components = {...}
-    local sorted_names = {...}
-    table.sort(sorted_names)
-    local key = table.concat(sorted_names, "|")
+function World:group(owned, ...)
+    local owned_names = {}
+    local filter_names = {}
+
+    if type(owned) == "table" then
+        owned_names = owned
+        filter_names = (...) or {}
+    else
+        owned_names = {owned, ...}
+    end
+    
+    local all_names = {}
+    for _, n in ipairs(owned_names) do table.insert(all_names, n) end
+    for _, n in ipairs(filter_names) do table.insert(all_names, n) end
+    table.sort(all_names)
+    local key = table.concat(all_names, "|")
     
     if self.groups[key] then return self.groups[key] end
+
+    for _, name in ipairs(owned_names) do
+        if self.component_owners[name] then
+            local owner = self.component_owners[name]
+            error(string.format(
+                "Ownership conflict: component '%s' is already owned by Group(%s).",
+                name, owner.key))
+        end
+    end
     
-    local group = Group.new(self, components)
+    local group = Group.new(self, owned_names, filter_names)
+    group.key = key
+    
+    for _, name in ipairs(owned_names) do
+        self.component_owners[name] = group
+    end
+    
     self.groups[key] = group
     table.insert(self.groups, group)
     return group

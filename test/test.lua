@@ -152,6 +152,70 @@ local function test_late_group()
     print("Late Group Registration tests passed.")
 end
 
+local function test_group_partial()
+    print("Testing Partial Ownership Group...")
+    local world = ecs.world()
+    
+    -- gA owns vel, filters pos
+    local gA = world:group({"vel"}, {"pos"})
+    -- gB owns accel, filters pos
+    local gB = world:group({"accel"}, {"pos"})
+    
+    local e1 = world:create({ pos = "p1", vel = "v1", accel = "a1" })
+    local e2 = world:create({ pos = "p2", vel = "v2" })
+    local e3 = world:create({ pos = "p3", accel = "a3" })
+    
+    assert_eq(gA.size, 2, "gA size should be 2")
+    assert_eq(gB.size, 2, "gB size should be 2")
+    
+    -- Test iteration gA
+    local count = 0
+    for id, comps in gA:iter() do
+        count = count + 1
+        if id == e1 then
+            assert_eq(comps[1], "v1") -- vel (owned)
+            assert_eq(comps[2], "p1") -- pos (filtered)
+        end
+    end
+    assert_eq(count, 2)
+    
+    -- Test iteration gB
+    count = 0
+    for id, comps in gB:iter() do
+        count = count + 1
+        if id == e1 then
+            assert_eq(comps[1], "a1") -- accel (owned)
+            assert_eq(comps[2], "p1") -- pos (filtered)
+        end
+    end
+    assert_eq(count, 2)
+    
+    print("Partial Ownership Group tests passed.")
+end
+
+local function test_group_conflict()
+    print("Testing Group Ownership Conflict...")
+    local world = ecs.world()
+    
+    world:group("pos", "vel")
+    
+    -- Should fail to create another group that owns 'pos'
+    local ok, err = pcall(function()
+        world:group("pos", "accel")
+    end)
+    
+    assert_false(ok, "Should not allow duplicate ownership of 'pos'")
+    assert_true(err:match("already owned by Group"), "Error message should mention ownership")
+    
+    -- Should ALLOW partial group that only FILTERS 'pos'
+    local ok2 = pcall(function()
+        world:group({"accel"}, {"pos"})
+    end)
+    assert_true(ok2, "Should allow filtering a component owned by another group")
+    
+    print("Group Ownership Conflict tests passed.")
+end
+
 local function test_c_components()
     print("Testing C Components...")
     local world = ecs.world()
@@ -239,6 +303,8 @@ local function run_tests()
     test_view()
     test_group()
     test_late_group()
+    test_group_partial()
+    test_group_conflict()
     test_c_components()
     test_templates()
     test_systems()
