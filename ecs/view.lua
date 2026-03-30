@@ -6,16 +6,21 @@ function View.new(world, names)
     self.world = world
     self.names = names
     self.n = #names
-    
+
+    return self
+end
+
+local CComponent = require "ecs.c_component"
+
+function View:resolve_sets()
     local sets = {}
     local min_idx = 1
     local min_size = math.huge
-    
-    for i=1, self.n do
-        local set = world.component_sets[names[i]]
-        if not set then 
-            self.invalid = true
-            return self
+
+    for i = 1, self.n do
+        local set = self.world.component_sets[self.names[i]]
+        if not set then
+            return nil
         end
         sets[i] = set
         local sz = set:size()
@@ -24,15 +29,16 @@ function View.new(world, names)
             min_idx = i
         end
     end
+
     self.sets = sets
     self.min_idx = min_idx
-    return self
+    return true
 end
 
-local CComponent = require "ecs.c_component"
-
 function View:each()
-    if self.invalid then return function() end end
+    if not self:resolve_sets() then
+        return function() end
+    end
     
     local world = self.world
     local n = self.n

@@ -1,5 +1,4 @@
-package.path = package.path .. ";./?.lua;./ecs/?.lua"
-package.cpath = package.cpath .. ";../lua-sparse-set/build/?.so"
+require "test.bootstrap"
 
 local ecs = require "ecs"
 
@@ -284,12 +283,12 @@ local function test_c_components()
     })
     
     local e1 = world:create()
-    world:add(e1, "c_pos", {x = 1.5, y = 2.5, active = 1})
+    world:add(e1, "c_pos", {x = 1.5, y = 2.5, active = true})
     
     local cp = world:get(e1, "c_pos")
     assert_eq(cp.x, 1.5)
     assert_eq(cp.y, 2.5)
-    assert_eq(cp.active, 1)
+    assert_eq(cp.active, true)
     
     -- Update C component
     cp.x = 10.5
@@ -352,6 +351,98 @@ local function test_systems()
     print("Systems tests passed.")
 end
 
+local function test_view_cache_recovers_after_component_registration()
+    print("Testing View Cache Recovery...")
+    local world = ecs.world()
+
+    local view = world:view("pos")
+    local id = world:create({ pos = { x = 42 } })
+
+    local count = 0
+    local found = false
+    for eid, pos in view:each() do
+        count = count + 1
+        if eid == id and pos.x == 42 then
+            found = true
+        end
+    end
+
+    assert_eq(count, 1, "View should recover after component registration")
+    assert_true(found, "View should return the newly created entity")
+    print("View Cache Recovery tests passed.")
+end
+
+local function test_destroy_signal_on_entity_destroy()
+    print("Testing Destroy Signal on Entity Destroy...")
+    local world = ecs.world()
+
+    local called = 0
+    world:on_destroy("pos", function()
+        called = called + 1
+    end)
+
+    local id = world:create({ pos = { x = 1 }, vel = { x = 2 } })
+    world:destroy(id)
+
+    assert_eq(called, 1, "Destroy signal should be triggered when destroying an entity")
+    print("Destroy Signal tests passed.")
+end
+
+local function test_template_deep_copy()
+    print("Testing Template Deep Copy...")
+    local world = ecs.world()
+    world:template("enemy", { stats = { hp = 100, mp = 50 } })
+
+    local e1 = world:create({ enemy = true })
+    local e2 = world:create({ enemy = true })
+
+    world:get(e1, "enemy").stats.hp = 1
+    assert_eq(world:get(e2, "enemy").stats.hp, 100, "Template nested fields should not be shared")
+    print("Template Deep Copy tests passed.")
+end
+
+local function test_group_owned_filter_role_distinction()
+    print("Testing Group Owned/Filter Role Distinction...")
+    local world = ecs.world()
+
+    local g1 = world:group({ "A" }, { "B" })
+    local g2 = world:group({ "B" }, { "A" })
+    assert_true(g1 ~= g2, "Groups with swapped owned/filter roles should be distinct")
+
+    local e1 = world:create({ A = 1, B = 1 })
+    local e2 = world:create({ A = 2 })
+    local e3 = world:create({ B = 3 })
+
+    assert_eq(g1.size, 1, "g1 should include only entities with A and B")
+    assert_eq(g2.size, 1, "g2 should include only entities with B and A")
+
+    local count1, count2 = 0, 0
+    for id in g1:each() do
+        count1 = count1 + 1
+        assert_eq(id, e1, "g1 should only return the AB entity")
+    end
+    for id in g2:each() do
+        count2 = count2 + 1
+        assert_eq(id, e1, "g2 should only return the AB entity")
+    end
+    assert_eq(count1, 1)
+    assert_eq(count2, 1)
+    assert_true(world:valid(e2))
+    assert_true(world:valid(e3))
+    print("Group Owned/Filter Role Distinction tests passed.")
+end
+
+local function test_group_owned_filter_overlap_rejected()
+    print("Testing Group Owned/Filter Overlap Rejection...")
+    local world = ecs.world()
+    local ok, err = pcall(function()
+        world:group({ "A" }, { "A" })
+    end)
+    assert_false(ok, "Group creation should fail when a component is both owned and filtered")
+    assert_true(err:match("cannot be both owned and filtered") ~= nil, "Error should mention owned/filter overlap")
+    print("Group Owned/Filter Overlap Rejection tests passed.")
+end
+
 local function run_tests()
     test_world_basic()
     test_entity_proxy()
@@ -364,6 +455,11 @@ local function run_tests()
     test_c_components()
     test_templates()
     test_systems()
+    test_view_cache_recovers_after_component_registration()
+    test_destroy_signal_on_entity_destroy()
+    test_template_deep_copy()
+    test_group_owned_filter_role_distinction()
+    test_group_owned_filter_overlap_rejected()
     print("\nALL ECS TESTS PASSED")
 end
 

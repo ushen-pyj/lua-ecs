@@ -16,6 +16,48 @@ local C_TYPES = {
     bool = { id = 5, size = 1, pack = "I1" },
 }
 
+local function deep_copy(value, seen)
+    if type(value) ~= "table" then
+        return value
+    end
+    seen = seen or {}
+    if seen[value] then
+        return seen[value]
+    end
+
+    local copy = {}
+    seen[value] = copy
+    for k, v in pairs(value) do
+        copy[deep_copy(k, seen)] = deep_copy(v, seen)
+    end
+    return setmetatable(copy, getmetatable(value))
+end
+
+local function contains(list, value)
+    for _, v in ipairs(list) do
+        if v == value then
+            return true
+        end
+    end
+    return false
+end
+
+local function make_group_key(owned_names, filter_names)
+    local owned = {}
+    local filters = {}
+
+    for i, name in ipairs(owned_names) do
+        owned[i] = name
+    end
+    for i, name in ipairs(filter_names) do
+        filters[i] = name
+    end
+
+    table.sort(owned)
+    table.sort(filters)
+    return string.format("O:%s|F:%s", table.concat(owned, "&"), table.concat(filters, "&"))
+end
+
 function World.new()
     local self = setmetatable({}, World)
     self.registry = sparseset.new_registry()
@@ -124,6 +166,7 @@ function World:register(decl)
     
     self.component_sets[name] = set
     table.insert(self.component_names, name)
+    self.view_cache = {}
     return set
 end
 
@@ -132,6 +175,7 @@ function World:register_component(name)
     local set = sparseset.new_set()
     self.component_sets[name] = set
     table.insert(self.component_names, name)
+    self.view_cache = {}
     return set
 end
 
@@ -152,8 +196,7 @@ end
 function World:destroy(id)
     for _, name in ipairs(self.component_names) do
         if self:has(id, name) then
-            self:update_groups_on_remove(id, name)
-            self.component_sets[name]:remove(id)
+            self:remove(id, name)
         end
     end
     self.registry:destroy(id)
@@ -198,9 +241,7 @@ function World:add(id, name, data)
         if data == true or data == nil then
             local tpl = self.templates[name]
             if tpl then
-                local newData = {}
-                for k,v in pairs(tpl) do newData[k] = v end
-                data = newData
+                data = deep_copy(tpl)
             else
                 data = true
             end
@@ -274,7 +315,9 @@ function World:view(...)
     if self.view_cache[key] then return self.view_cache[key] end
     
     local view = View.new(self, names)
-    self.view_cache[key] = view
+    if not view.invalid then
+        self.view_cache[key] = view
+    end
     return view
 end
 
@@ -293,16 +336,22 @@ function World:group(owned, ...)
 
     if type(owned) == "table" then
         owned_names = owned
-        filter_names = (...) or {}
+        local filter_arg = (...)
+        if filter_arg ~= nil and type(filter_arg) ~= "table" then
+            error("Group filters must be a table when owned components are passed as a table")
+        end
+        filter_names = filter_arg or {}
     else
         owned_names = {owned, ...}
     end
-    
-    local all_names = {}
-    for _, n in ipairs(owned_names) do table.insert(all_names, n) end
-    for _, n in ipairs(filter_names) do table.insert(all_names, n) end
-    table.sort(all_names)
-    local key = table.concat(all_names, "|")
+
+    for _, name in ipairs(filter_names) do
+        if contains(owned_names, name) then
+            error(string.format("Group conflict: component '%s' cannot be both owned and filtered.", name))
+        end
+    end
+
+    local key = make_group_key(owned_names, filter_names)
     
     if self.groups[key] then return self.groups[key] end
 

@@ -1,6 +1,4 @@
-
-package.path = package.path .. ";./?.lua;./ecs/?.lua"
-package.cpath = package.cpath .. ";./luaclib/?.so;;"
+require "test.bootstrap"
 
 local ecs = require "ecs"
 
