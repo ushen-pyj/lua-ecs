@@ -30,7 +30,11 @@ local function deep_copy(value, seen)
     for k, v in pairs(value) do
         copy[deep_copy(k, seen)] = deep_copy(v, seen)
     end
-    return setmetatable(copy, getmetatable(value))
+    local mt = getmetatable(value)
+    if mt then
+        setmetatable(copy, deep_copy(mt, seen))
+    end
+    return copy
 end
 
 local function contains(list, value)
@@ -82,7 +86,6 @@ local function get_runner(n)
     if runner_cache[n] then return runner_cache[n] end
     
     local args = {"id"}
-    local params = {"dt", "view", "fn"}
     for i = 1, n do table.insert(args, "c" .. i) end
     local arg_str = table.concat(args, ", ")
     
@@ -127,10 +130,11 @@ function World:register(decl)
     if type(decl) == "string" then
         return self:register_component(decl)
     end
-    
+
     local name = decl.name
     if not name then error("Component must have a name") end
-    
+    if name:match("[&|]") then error("Component name must not contain '&' or '|': " .. name) end
+
     if self.component_sets[name] then return self.component_sets[name] end
     local is_c = false
     local fields = {}
@@ -171,6 +175,10 @@ function World:register(decl)
 end
 
 function World:register_component(name)
+    if name:match("[&|]") then error("Component name must not contain '&' or '|': " .. name) end
+    if name == "destroy" or name == "has" or name == "set" then
+        error("Component name '" .. name .. "' is reserved (entity proxy method)")
+    end
     if self.component_sets[name] then return self.component_sets[name] end
     local set = sparseset.new_set()
     self.component_sets[name] = set
@@ -194,6 +202,9 @@ function World:create(components)
 end
 
 function World:destroy(id)
+    -- Components are removed sequentially in registration order.
+    -- Each remove() fires on_destroy signals, so callbacks may observe a
+    -- partially-destroyed entity (later components still present, earlier ones gone).
     for _, name in ipairs(self.component_names) do
         if self:has(id, name) then
             self:remove(id, name)
@@ -313,11 +324,11 @@ function World:view(...)
     local key = table.concat(key_names, "|")
     
     if self.view_cache[key] then return self.view_cache[key] end
-    
-    local view = View.new(self, names)
-    if not view.invalid then
-        self.view_cache[key] = view
-    end
+
+    -- Pass sorted names so all callers with permuted arguments share the same cached View
+    -- and iteration yields components in a consistent (sorted) order.
+    local view = View.new(self, key_names)
+    self.view_cache[key] = view
     return view
 end
 
@@ -343,6 +354,10 @@ function World:group(owned, ...)
         filter_names = filter_arg or {}
     else
         owned_names = {owned, ...}
+    end
+
+    if #owned_names == 0 then
+        error("Group must own at least one component")
     end
 
     for _, name in ipairs(filter_names) do

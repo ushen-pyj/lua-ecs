@@ -36,6 +36,10 @@ function View:resolve_sets()
 end
 
 function View:each()
+    -- Guard against empty view (zero component names).
+    if self.n == 0 then
+        return function() end
+    end
     if not self:resolve_sets() then
         return function() end
     end
@@ -46,6 +50,10 @@ function View:each()
     local sets = self.sets
     local names = self.names
     
+    -- Flyweight proxies are shared across iterations and rebound per entity.
+    -- Do NOT store references to C-component values returned by each();
+    -- they all point to the same proxy and will reflect the last entity's data.
+    -- Copy fields explicitly if you need stable per-entity data.
     local flyweights = {}
     for j=1, n do
         local desc = world.c_descriptors[names[j]]

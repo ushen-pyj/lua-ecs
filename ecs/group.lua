@@ -52,6 +52,9 @@ function Group:owns(component_name)
     return false
 end
 
+-- exclude_name: when non-nil, tests whether the entity would still match
+-- WITHOUT that component (i.e. the component is treated as already removed).
+-- Returns false if the excluded component is a required (owned/filter) component.
 function Group:match(id, exclude_name)
     for name, set in pairs(self.owned_sets) do
         if name == exclude_name then return false end
@@ -84,7 +87,7 @@ function Group:is_in_group(id)
     local leader_name = self.owned[1] or self.filters[1]
     local leader_set = self.owned_sets[leader_name] or self.filter_sets[leader_name]
     local pos = leader_set:index_of(id)
-    return pos and pos <= self.size
+    return pos and pos <= self.size or false
 end
 
 function Group:add_to_group(id)
@@ -152,7 +155,10 @@ function Group:each()
     local world = self.world
     local components = self.components
     local num_comps = #components
-    
+
+    -- Flyweight proxies are shared across iterations and rebound per entity.
+    -- Do NOT store references to C-component values returned by each();
+    -- copy fields explicitly if you need stable per-entity data.
     local sets = {}
     local is_owned = {}
     local flyweights = {}
