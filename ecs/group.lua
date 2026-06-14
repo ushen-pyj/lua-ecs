@@ -42,7 +42,7 @@ function Group:initialize()
     end
 end
 
-function Group:owns(component_name)
+function Group:tracks(component_name)
     for _, name in ipairs(self.owned) do
         if name == component_name then return true end
     end
@@ -68,14 +68,14 @@ function Group:match(id, exclude_name)
 end
 
 function Group:on_add(id, component_name)
-    if not self:owns(component_name) then return end
+    if not self:tracks(component_name) then return end
     if self:match(id) and not self:is_in_group(id) then
         self:add_to_group(id)
     end
 end
 
 function Group:on_remove(id, component_name)
-    if not self:owns(component_name) then return end
+    if not self:tracks(component_name) then return end
     if self:is_in_group(id) then
         if not self:match(id, component_name) then
             self:remove_from_group(id)
@@ -156,9 +156,14 @@ function Group:each()
     local components = self.components
     local num_comps = #components
 
-    -- Flyweight proxies are shared across iterations and rebound per entity.
-    -- Do NOT store references to C-component values returned by each();
-    -- copy fields explicitly if you need stable per-entity data.
+    -- WARNING: C-component flyweight proxies are SHARED across all iterations.
+    -- They are rebound per entity via _bind(). Do NOT store the proxy reference
+    -- returned by each() — all stored references will reflect the LAST entity's data.
+    -- If you need stable per-entity C-component data, copy fields explicitly:
+    --   for id, pos in group:each() do
+    --       local x, y = pos.x, pos.y  -- copy immediately
+    --       ...
+    --   end
     local sets = {}
     local is_owned = {}
     local flyweights = {}

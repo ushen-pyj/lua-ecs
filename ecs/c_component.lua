@@ -28,7 +28,11 @@ function Component:__newindex(key, value)
     if field then
         self._set:set_field(self._id, field.offset, field.type, value)
     else
-        rawset(self, key, value)
+        error(string.format(
+            "Unknown field '%s' for C-component '%s'. Valid fields: %s",
+            key,
+            self._name,
+            table.concat(self._desc.field_names, ", ")))
     end
 end
 

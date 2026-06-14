@@ -72,6 +72,7 @@ function World.new()
     self.systems = {}
     self.groups = {}
     self.group_chains = {} -- component_name -> sorted list of groups owning it
+    self.component_to_filter_groups = {} -- component_name -> list of groups that filter (but don't own) it
     self.signals = {
         construct = {},
         update = {},
@@ -81,25 +82,67 @@ function World.new()
     return self
 end
 
-local runner_cache = {}
-local function get_runner(n)
-    if runner_cache[n] then return runner_cache[n] end
-    
-    local args = {"id"}
-    for i = 1, n do table.insert(args, "c" .. i) end
-    local arg_str = table.concat(args, ", ")
-    
-    local code = string.format([[
-        return function(dt, view, fn)
-            for %s in view:each() do
-                fn(dt, %s)
-            end
+-- Pre-defined zero-overhead runners for common component counts (0-8).
+-- These avoid dynamic code generation via load().
+local RUNNERS = {
+    -- n = 0: view with no components (iterates over empty view → no-op)
+    [0] = function(dt, view, fn)
+        for id in view:each() do fn(dt, id) end
+    end,
+    -- n = 1
+    function(dt, view, fn)
+        for id, c1 in view:each() do fn(dt, id, c1) end
+    end,
+    -- n = 2
+    function(dt, view, fn)
+        for id, c1, c2 in view:each() do fn(dt, id, c1, c2) end
+    end,
+    -- n = 3
+    function(dt, view, fn)
+        for id, c1, c2, c3 in view:each() do fn(dt, id, c1, c2, c3) end
+    end,
+    -- n = 4
+    function(dt, view, fn)
+        for id, c1, c2, c3, c4 in view:each() do fn(dt, id, c1, c2, c3, c4) end
+    end,
+    -- n = 5
+    function(dt, view, fn)
+        for id, c1, c2, c3, c4, c5 in view:each() do fn(dt, id, c1, c2, c3, c4, c5) end
+    end,
+    -- n = 6
+    function(dt, view, fn)
+        for id, c1, c2, c3, c4, c5, c6 in view:each() do fn(dt, id, c1, c2, c3, c4, c5, c6) end
+    end,
+    -- n = 7
+    function(dt, view, fn)
+        for id, c1, c2, c3, c4, c5, c6, c7 in view:each() do fn(dt, id, c1, c2, c3, c4, c5, c6, c7) end
+    end,
+    -- n = 8
+    function(dt, view, fn)
+        for id, c1, c2, c3, c4, c5, c6, c7, c8 in view:each() do fn(dt, id, c1, c2, c3, c4, c5, c6, c7, c8) end
+    end,
+}
+
+-- Fallback for n > 8: uses table.pack/unpack (one table allocation per entity).
+-- In practice, systems rarely query more than 8 components simultaneously.
+local FALLBACK_RUNNER_CACHE = {}
+local function make_fallback_runner()
+    return function(dt, view, fn)
+        local it = view:each()
+        while true do
+            local packed = {it()}
+            if packed[1] == nil then break end
+            fn(dt, table.unpack(packed))
         end
-    ]], arg_str, arg_str)
-    
-    local chunk = load(code)
-    runner_cache[n] = chunk()
-    return runner_cache[n]
+    end
+end
+
+local function get_runner(n)
+    if RUNNERS[n] then return RUNNERS[n] end
+    if not FALLBACK_RUNNER_CACHE[n] then
+        FALLBACK_RUNNER_CACHE[n] = make_fallback_runner()
+    end
+    return FALLBACK_RUNNER_CACHE[n]
 end
 
 function World:on_construct(name, callback)
@@ -412,6 +455,18 @@ function World:group(owned, ...)
         table.sort(chain, function(a, b) return #a.owned > #b.owned end)
         self.group_chains[name] = chain
     end
+
+    -- Build reverse index: component -> groups that filter (but don't own) it
+    for _, name in ipairs(filter_names) do
+        if not contains(owned_names, name) then
+            local list = self.component_to_filter_groups[name]
+            if not list then
+                list = {}
+                self.component_to_filter_groups[name] = list
+            end
+            table.insert(list, group)
+        end
+    end
     
     self.groups[key] = group
     table.insert(self.groups, group)
@@ -437,13 +492,10 @@ function World:group(owned, ...)
 end
 
 function World:update_groups_on_add(id, name)
-    -- 1. Handle non-owned groups
-    for _, group in ipairs(self.groups) do
-        local is_owned = false
-        for _, n in ipairs(group.owned) do
-            if n == name then is_owned = true; break end
-        end
-        if not is_owned then
+    -- 1. Handle non-owned (filter-only) groups — use reverse index
+    local filter_groups = self.component_to_filter_groups[name]
+    if filter_groups then
+        for _, group in ipairs(filter_groups) do
             group:on_add(id, name)
         end
     end
@@ -473,13 +525,10 @@ function World:update_groups_on_add(id, name)
 end
 
 function World:update_groups_on_remove(id, name)
-    -- Handle non-owned groups
-    for _, group in ipairs(self.groups) do
-        local is_chained = false
-        for _, owned_name in ipairs(group.owned) do
-            if owned_name == name then is_chained = true; break end
-        end
-        if not is_chained then
+    -- Handle non-owned (filter-only) groups — use reverse index
+    local filter_groups = self.component_to_filter_groups[name]
+    if filter_groups then
+        for _, group in ipairs(filter_groups) do
             group:on_remove(id, name)
         end
     end

@@ -50,10 +50,14 @@ function View:each()
     local sets = self.sets
     local names = self.names
     
-    -- Flyweight proxies are shared across iterations and rebound per entity.
-    -- Do NOT store references to C-component values returned by each();
-    -- they all point to the same proxy and will reflect the last entity's data.
-    -- Copy fields explicitly if you need stable per-entity data.
+    -- WARNING: C-component flyweight proxies are SHARED across all iterations.
+    -- They are rebound per entity via _bind(). Do NOT store the proxy reference
+    -- returned by each() — all stored references will reflect the LAST entity's data.
+    -- If you need stable per-entity C-component data, copy fields explicitly:
+    --   for id, pos in view:each() do
+    --       local x, y = pos.x, pos.y  -- copy immediately
+    --       ...
+    --   end
     local flyweights = {}
     for j=1, n do
         local desc = world.c_descriptors[names[j]]
